@@ -1067,9 +1067,13 @@ pub(crate) fn type_from_name(type_name: &str) -> (Type, bool) {
 /// rowid alias, and only removed the brackets of `[INTEGER]`. Existing
 /// databases depend on that, because a column that is not a rowid alias is
 /// stored in the record and has an automatic index.
-pub(crate) fn is_rowid_alias_type(written_type_name: &str) -> bool {
-    written_type_name.eq_ignore_ascii_case("INTEGER")
-        || written_type_name.eq_ignore_ascii_case("[INTEGER]")
+///
+/// An array type such as `INTEGER[]` is never a rowid alias, even though its
+/// element type name is `INTEGER`.
+pub(crate) fn is_rowid_alias_type(written_type: &ast::Type) -> bool {
+    !written_type.is_array()
+        && (written_type.name.eq_ignore_ascii_case("INTEGER")
+            || written_type.name.eq_ignore_ascii_case("[INTEGER]"))
 }
 
 pub fn columns_from_create_table_body(
@@ -1928,6 +1932,7 @@ pub fn visit_stmt<V: AstVisitor>(stmt: &ast::Stmt, visitor: &mut V) -> Result<()
         | ast::Stmt::CreateSequence { .. }
         | ast::Stmt::DropSequence { .. }
         | ast::Stmt::CreateSchema { .. }
+        | ast::Stmt::CreateRole { .. }
         | ast::Stmt::DropSchema { .. } => {}
     }
     Ok(())

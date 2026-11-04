@@ -112,6 +112,7 @@ impl Trigger {
     }
 }
 
+use crate::security::roles::RoleCatalog;
 use crate::storage::btree::{BTreeCursor, CursorTrait};
 use crate::sync::Arc;
 use crate::sync::Mutex;
@@ -1103,6 +1104,9 @@ pub struct Schema {
     /// The materialized views met before the names of the namespaces were
     /// loaded, built once they are.
     pending_materialized_views: Option<PendingMaterializedViews>,
+
+    /// The roles of the database. Copies of the schema share them.
+    pub roles: Arc<RoleCatalog>,
 }
 
 /// Materialized views the loader read before the names of the namespaces,
@@ -1299,6 +1303,7 @@ impl Schema {
             default_namespaces: dialect.default_namespaces(),
             namespace_names_loaded: !dialect.supports_namespaces(),
             pending_materialized_views: None,
+            roles: Arc::default(),
         };
         dialect.register_catalog(&mut schema, enable_custom_types)?;
         Ok(schema)
@@ -4590,6 +4595,7 @@ impl TryClone for Schema {
             default_namespaces: self.default_namespaces,
             namespace_names_loaded: self.namespace_names_loaded,
             pending_materialized_views: self.pending_materialized_views.clone(),
+            roles: self.roles.clone(),
             dropped_root_pages: self.dropped_root_pages.try_clone()?,
             type_registry: self.type_registry.try_clone()?,
             custom_types_enabled: self.custom_types_enabled,
@@ -5364,7 +5370,7 @@ impl BTreeTable {
                     && definition
                         .col_type
                         .as_ref()
-                        .is_some_and(|ty| is_rowid_alias_type(&ty.name)),
+                        .is_some_and(is_rowid_alias_type),
             );
         }
         Ok(column)
@@ -6754,7 +6760,7 @@ pub fn create_table(
                 let mut typename_exactly_integer = false;
                 let ty = match col_type {
                     Some(written_type) => {
-                        typename_exactly_integer = is_rowid_alias_type(&written_type.name);
+                        typename_exactly_integer = is_rowid_alias_type(written_type);
                         type_from_name(&ty_str).0
                     }
                     None => Type::Null,
@@ -7594,10 +7600,9 @@ impl Column {
             .unwrap_or_default();
 
         let (ty, typename_exactly_integer) = match value.col_type {
-            Some(ref written_type) => (
-                type_from_name(&ty_str).0,
-                is_rowid_alias_type(&written_type.name),
-            ),
+            Some(ref written_type) => {
+                (type_from_name(&ty_str).0, is_rowid_alias_type(written_type))
+            }
             None => (Type::Null, false),
         };
 
@@ -8737,6 +8742,15 @@ mod tests {
     }
 
     use crate::alloc::vec;
+
+    #[test]
+    fn schema_clones_share_the_role_catalog() {
+        let schema = Schema::new();
+
+        let clone = schema.try_clone().unwrap();
+
+        assert!(Arc::ptr_eq(&schema.roles, &clone.roles));
+    }
 
     #[test]
     fn test_column_definition_flag_conversion() {
